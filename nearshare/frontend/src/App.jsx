@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Share2, Download, Send, Wifi, Shield, Cpu } from 'lucide-react';
+import { Share2, Download, Send, Wifi, Shield, Cpu, FolderDown } from 'lucide-react';
 import HostDashboard from './components/HostDashboard';
 import ClientView from './components/ClientView';
 import './App.css';
 
 export default function App() {
-  const [view, setView] = useState('selection'); // 'selection' | 'host' | 'client'
+  const [view, setView] = useState('selection'); // 'selection' | 'host-send' | 'host-receive' | 'client'
   const [prefilledSessionId, setPrefilledSessionId] = useState('');
 
   // Check URL parameters for QR join links on load
@@ -43,15 +43,26 @@ export default function App() {
               </p>
             </section>
 
-            <div className="choices-grid">
-              {/* Host Choice */}
-              <div className="choice-panel host" onClick={() => setView('host')}>
+            <div className="choices-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', maxWidth: '1000px' }}>
+              {/* Host Send Choice */}
+              <div className="choice-panel host" onClick={() => setView('host-send')}>
                 <div className="choice-icon-wrapper">
                   <Send size={32} />
                 </div>
-                <h3 className="choice-title">Host a Session</h3>
+                <h3 className="choice-title">Send Files (Host)</h3>
                 <p className="choice-desc">
-                  Select a local file to share. We will spin up a session and generate a scan-to-download QR code.
+                  Select files on this Laptop to share. Generates a QR code and join link for clients.
+                </p>
+              </div>
+
+              {/* Host Receive Choice */}
+              <div className="choice-panel host" onClick={() => setView('host-receive')} style={{ borderColor: 'rgba(16, 185, 129, 0.2)' }}>
+                <div className="choice-icon-wrapper" style={{ background: 'rgba(16, 185, 129, 0.1)', color: 'var(--accent-emerald)', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
+                  <FolderDown size={32} />
+                </div>
+                <h3 className="choice-title">Receive Files (Host)</h3>
+                <p className="choice-desc">
+                  Open a receive room on this Laptop. Scan from your mobile to upload files here.
                 </p>
               </div>
 
@@ -60,9 +71,9 @@ export default function App() {
                 <div className="choice-icon-wrapper">
                   <Download size={32} />
                 </div>
-                <h3 className="choice-title">Join a Session</h3>
+                <h3 className="choice-title">Join Session (Client)</h3>
                 <p className="choice-desc">
-                  Enter a 6-character room code or connect via scanned links to securely pull active file packets.
+                  Scan QR / visit join link on your phone to download files or upload to this Laptop.
                 </p>
               </div>
             </div>
@@ -81,8 +92,12 @@ export default function App() {
           </>
         )}
 
-        {view === 'host' && (
-          <HostDashboard onBack={() => setView('selection')} />
+        {view === 'host-send' && (
+          <HostDashboard initialMode="send" onBack={() => setView('selection')} />
+        )}
+
+        {view === 'host-receive' && (
+          <HostDashboard initialMode="receive" onBack={() => setView('selection')} />
         )}
 
         {view === 'client' && (

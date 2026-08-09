@@ -6,9 +6,11 @@ import {
   Play, 
   RotateCcw, 
   CheckCircle, 
+  CheckCircle2,
   ShieldAlert, 
   Lock,
-  FileCheck
+  FileCheck,
+  UploadCloud
 } from 'lucide-react';
 
 // IndexedDB Helper to persist chunks locally for pause/resume without RAM overflow
@@ -88,6 +90,15 @@ export default function ClientView({ prefilledSessionId, onBack }) {
   const [speed, setSpeed] = useState(0); // Mbps
   const [eta, setEta] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
+
+  // ── Upload state (receive mode)
+  const [uploadFile, setUploadFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadDone, setUploadDone] = useState(false);
+  const [uploadSpeed, setUploadSpeed] = useState(0);
+  const uploadStartRef = useRef(null);
+  const uploadFileInputRef = useRef(null);
 
   // Web Crypto Key References
   const clientKeyPairRef = useRef(null);
@@ -564,6 +575,134 @@ export default function ClientView({ prefilledSessionId, onBack }) {
           </div>
         </div>
       ) : (
+        // ── Receive session: show upload panel for mobile
+        session.type === 'receive' ? (
+          <div className="glass-card" style={{ maxWidth: '600px', margin: '0 auto' }}>
+            <div className="badge-offline" style={{ marginBottom: '16px', display: 'inline-flex', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', color: 'var(--accent-emerald)' }}>
+              <Wifi size={14} /> Connected — Upload Room
+            </div>
+
+            <h2 style={{ fontSize: '22px', fontWeight: '600', marginBottom: '8px' }}>
+              {uploadDone ? 'Upload Complete!' : uploading ? 'Uploading File…' : 'Send a File to Laptop'}
+            </h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '24px' }}>
+              {uploadDone
+                ? 'Your file has been saved on the Laptop successfully.'
+                : 'Select the ZIP folder or any file you want to transfer to the Laptop.'
+              }
+            </p>
+
+            {!uploadDone ? (
+              <>
+                {/* File picker */}
+                <div
+                  className="drop-zone"
+                  onClick={() => uploadFileInputRef.current?.click()}
+                  style={{ marginBottom: '20px', cursor: 'pointer' }}
+                >
+                  <input
+                    type="file"
+                    ref={uploadFileInputRef}
+                    className="file-input-hidden"
+                    onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                  />
+                  <UploadCloud size={44} style={{ color: uploadFile ? 'var(--accent-emerald)' : 'var(--text-muted)', marginBottom: '12px', transition: 'color 0.3s' }} />
+                  <p className="drop-zone-title" style={{ color: uploadFile ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                    {uploadFile ? uploadFile.name : 'Tap to select a file'}
+                  </p>
+                  <p className="drop-zone-subtitle">
+                    {uploadFile ? formatBytes(uploadFile.size) : 'ZIP, images, videos, any format'}
+                  </p>
+                </div>
+
+                {/* Upload progress */}
+                {uploading && (
+                  <div style={{ marginBottom: '20px' }}>
+                    <div className="stats-cards-grid" style={{ marginBottom: '12px' }}>
+                      <div className="stat-mini-card">
+                        <span className="stat-label">Progress</span>
+                        <span className="stat-value highlight">{uploadProgress}%</span>
+                      </div>
+                      <div className="stat-mini-card">
+                        <span className="stat-label">Speed</span>
+                        <span className="stat-value highlight-violet">{uploadSpeed} Mbps</span>
+                      </div>
+                    </div>
+                    <div className="progress-container">
+                      <div className="progress-bar-fill" style={{
+                        width: `${uploadProgress}%`,
+                        background: 'linear-gradient(90deg, var(--accent-emerald), var(--accent-cyan))'
+                      }}></div>
+                    </div>
+                    <div className="progress-labels">
+                      <span>Uploading to Laptop…</span>
+                      <span>{uploadProgress}%</span>
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  className="btn-primary"
+                  disabled={!uploadFile || uploading}
+                  style={{ width: '100%', background: 'linear-gradient(135deg, var(--accent-emerald) 0%, var(--accent-cyan) 100%)' }}
+                  onClick={() => {
+                    if (!uploadFile || !session) return;
+                    setUploading(true);
+                    uploadStartRef.current = Date.now();
+                    const formData = new FormData();
+                    formData.append('file', uploadFile);
+                    const xhr = new XMLHttpRequest();
+                    xhr.open('POST', `/api/upload-to-host/${session.sessionId}`, true);
+                    xhr.upload.onprogress = (e) => {
+                      if (e.lengthComputable) {
+                        const pct = Math.round((e.loaded / e.total) * 100);
+                        setUploadProgress(pct);
+                        const elapsed = (Date.now() - uploadStartRef.current) / 1000;
+                        if (elapsed > 0) {
+                          const spd = ((e.loaded * 8) / elapsed / (1024 * 1024)).toFixed(1);
+                          setUploadSpeed(spd);
+                        }
+                      }
+                    };
+                    xhr.onload = () => {
+                      setUploading(false);
+                      setUploadDone(true);
+                    };
+                    xhr.onerror = () => {
+                      setUploading(false);
+                      alert('Upload failed. Check your connection.');
+                    };
+                    xhr.send(formData);
+                  }}
+                >
+                  {uploading ? `Uploading ${uploadProgress}%…` : uploadFile ? `Upload "${uploadFile.name}"` : 'Select a File First'}
+                </button>
+              </>
+            ) : (
+              // Success state
+              <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                <div style={{
+                  width: '80px', height: '80px', borderRadius: '50%',
+                  background: 'rgba(16,185,129,0.15)', border: '2px solid rgba(16,185,129,0.4)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  margin: '0 auto 20px', color: 'var(--accent-emerald)'
+                }}>
+                  <CheckCircle2 size={40} />
+                </div>
+                <h3 style={{ fontSize: '20px', fontWeight: '600', color: 'var(--accent-emerald)', marginBottom: '8px' }}>
+                  File Sent Successfully!
+                </h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '15px', marginBottom: '24px' }}>
+                  <strong>{uploadFile?.name}</strong> ({formatBytes(uploadFile?.size)}) has been received by your Laptop.
+                </p>
+                <button className="btn-secondary" onClick={() => { setUploadFile(null); setUploadDone(false); setUploadProgress(0); setUploadSpeed(0); }}>
+                  Send Another File
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+        // ── Send session: show download panel
         <div className="glass-card" style={{ maxWidth: '750px', margin: '0 auto' }}>
           {/* Header */}
           <div style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '20px', marginBottom: '24px' }}>
@@ -591,7 +730,6 @@ export default function ClientView({ prefilledSessionId, onBack }) {
             </div>
           ) : (
             <div className="speed-telemetry-panel">
-              {/* Telemetry Stats */}
               <div className="stats-cards-grid">
                 <div className="stat-mini-card">
                   <span className="stat-label">Progress</span>
@@ -607,7 +745,6 @@ export default function ClientView({ prefilledSessionId, onBack }) {
                 </div>
               </div>
 
-              {/* Progress bar fill */}
               <div>
                 <div className="progress-container">
                   <div className="progress-bar-fill" style={{ width: `${getPercentProgress()}%` }}></div>
@@ -618,7 +755,6 @@ export default function ClientView({ prefilledSessionId, onBack }) {
                 </div>
               </div>
 
-              {/* Action buttons */}
               <div className="controls-row">
                 {!downloading ? (
                   <button className="btn-primary" onClick={handleStartDownload} style={{ flex: '1' }}>
@@ -629,28 +765,23 @@ export default function ClientView({ prefilledSessionId, onBack }) {
                     <Pause size={18} /> Pause Transfer
                   </button>
                 )}
-                
                 <button className="btn-secondary" onClick={handleResetProgress} disabled={downloading} title="Reset Progress">
                   <RotateCcw size={18} />
                 </button>
               </div>
 
-              {/* Visual Grid representation */}
               <div>
                 <h4 className="chunk-grid-title">Verification Hash Matrix ({session.totalChunks} chunks)</h4>
                 <div className="chunk-visual-grid">
                   {progressArray.map((status, index) => (
-                    <div 
-                      key={index} 
-                      className={`chunk-cell ${status}`}
-                      title={`Chunk #${index}: ${status}`}
-                    ></div>
+                    <div key={index} className={`chunk-cell ${status}`} title={`Chunk #${index}: ${status}`}></div>
                   ))}
                 </div>
               </div>
             </div>
           )}
         </div>
+        )
       )}
     </div>
   );

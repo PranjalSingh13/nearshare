@@ -156,6 +156,78 @@ app.post('/api/sessions', upload.single('file'), async (req, res) => {
   }
 });
 
+// HTTP API: Create a Receive Session (Mobile -> Laptop)
+app.post('/api/sessions/receive', async (req, res) => {
+  try {
+    const sessionId = Math.random().toString(36).substring(2, 8).toUpperCase();
+    
+    const sessionData = {
+      sessionId,
+      type: 'receive',
+      status: 'waiting', // waiting, uploading, completed
+      fileName: '',
+      fileSize: 0,
+      uploadedBytes: 0,
+      mlConfidence: 'Receive Mode Heuristic'
+    };
+
+    activeSessions.set(sessionId, sessionData);
+
+    console.log(`[Host] Created RECEIVE session ${sessionId}. Waiting for client upload...`);
+
+    res.json({
+      sessionId,
+      type: 'receive',
+      downloadUrl: `http://${getLocalIpAddress()}:3000/?join=${sessionId}`
+    });
+  } catch (error) {
+    console.error('Failed to create receive session:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// HTTP API: Upload file to Host (Client -> Host)
+app.post('/api/upload-to-host/:sessionId', (req, res, next) => {
+  const { sessionId } = req.params;
+  const session = activeSessions.get(sessionId);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  session.status = 'uploading';
+  session.uploadedBytes = 0;
+
+  const totalLength = parseInt(req.headers['content-length'], 10) || 0;
+  session.fileSize = totalLength;
+
+  let lastUpdate = 0;
+  req.on('data', (chunk) => {
+    session.uploadedBytes += chunk.length;
+    const now = Date.now();
+    if (now - lastUpdate > 100) {
+      broadcastUploadProgress(sessionId, session.uploadedBytes, totalLength);
+      lastUpdate = now;
+    }
+  });
+
+  next();
+}, upload.single('file'), (req, res) => {
+  const { sessionId } = req.params;
+  const session = activeSessions.get(sessionId);
+
+  if (session && req.file) {
+    session.status = 'completed';
+    session.fileName = req.file.originalname;
+    session.fileSize = req.file.size;
+    session.filePath = req.file.path;
+    
+    // Broadcast 100% complete
+    broadcastUploadProgress(sessionId, session.fileSize, session.fileSize);
+    broadcastUploadCompleted(sessionId, session.fileName, session.fileSize);
+    console.log(`[Host] Successfully received file ${session.fileName} (${session.fileSize} bytes) for session ${sessionId}`);
+  }
+
+  res.json({ success: true });
+});
+
 // HTTP API: Get active session info
 app.get('/api/sessions/:sessionId', async (req, res) => {
   const { sessionId } = req.params;
@@ -164,6 +236,8 @@ app.get('/api/sessions/:sessionId', async (req, res) => {
   if (memorySession) {
     return res.json({
       sessionId: memorySession.sessionId,
+      type: memorySession.type || 'send',
+      status: memorySession.status,
       fileName: memorySession.fileName,
       fileSize: memorySession.fileSize,
       chunkSize: memorySession.chunkSize,
@@ -241,6 +315,34 @@ function broadcastSessionUpdate(sessionId) {
   connections.forEach((info, ws) => {
     if (info.sessionId === sessionId && ws.readyState === WebSocket.OPEN) {
       ws.send(updateMessage);
+    }
+  });
+}
+
+// Broadcast incoming mobile-to-laptop upload progress
+function broadcastUploadProgress(sessionId, uploadedBytes, totalBytes) {
+  const message = JSON.stringify({
+    type: 'upload_progress',
+    uploadedBytes,
+    totalBytes
+  });
+  connections.forEach((info, ws) => {
+    if (info.sessionId === sessionId && ws.readyState === WebSocket.OPEN) {
+      ws.send(message);
+    }
+  });
+}
+
+// Broadcast incoming mobile-to-laptop upload completion
+function broadcastUploadCompleted(sessionId, fileName, fileSize) {
+  const message = JSON.stringify({
+    type: 'upload_complete',
+    fileName,
+    fileSize
+  });
+  connections.forEach((info, ws) => {
+    if (info.sessionId === sessionId && ws.readyState === WebSocket.OPEN) {
+      ws.send(message);
     }
   });
 }
