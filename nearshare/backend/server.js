@@ -96,8 +96,8 @@ function getLocalIpAddress() {
   return 'localhost';
 }
 
-// The backend port
-const PORT = 3000;
+// The backend port (uses process.env.PORT injected by Render/Railway/Heroku, or 3000 locally)
+const PORT = process.env.PORT || 3000;
 
 // The frontend app port — 5173 in dev (Vite), 3000 in production (served by Express)
 // We detect whether the built frontend exists to decide which port to expose in QR links
