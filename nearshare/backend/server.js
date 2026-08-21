@@ -36,10 +36,21 @@ const wss = new WebSocketServer({ noServer: true });
 app.use(cors());
 app.use(express.json());
 
+// Helper to construct public base URL (works on local network as well as cloud deployment e.g. Render/Railway)
+function getBaseUrl(req) {
+  const host = req.headers['x-forwarded-host'] || req.headers.host || `${getLocalIpAddress()}:${APP_PORT}`;
+  const proto = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
+  return `${proto}://${host}`;
+}
+
 // Serve static build of frontend in production
 const frontendBuildPath = path.join(__dirname, '../frontend/dist');
 if (fs.existsSync(frontendBuildPath)) {
   app.use(express.static(frontendBuildPath));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/ws')) return next();
+    res.sendFile(path.join(frontendBuildPath, 'index.html'));
+  });
 }
 
 // Multer disk storage config
@@ -53,7 +64,8 @@ const storage = multer.diskStorage({
     cb(null, safeName);
   }
 });
-const upload = multer({ storage });
+// No practical file size cap — 50 GB covers any realistic transfer (ZIP files, large videos, etc.)
+const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 * 1024 } });
 
 // In-memory active session stores
 // sessionId -> { sessionDetails, ecdhInstance, ecdhPublicKey }
@@ -84,10 +96,17 @@ function getLocalIpAddress() {
   return 'localhost';
 }
 
+// The backend port
+const PORT = 3000;
+
+// The frontend app port — 5173 in dev (Vite), 3000 in production (served by Express)
+// We detect whether the built frontend exists to decide which port to expose in QR links
+const APP_PORT = fs.existsSync(frontendBuildPath) ? PORT : 5173;
+
 // HTTP API: Get Host local IP & port configuration
 app.get('/api/config', (req, res) => {
   const ip = getLocalIpAddress();
-  res.json({ ip, port: 3000 });
+  res.json({ ip, port: APP_PORT });
 });
 
 // HTTP API: Upload file and create session
@@ -148,7 +167,7 @@ app.post('/api/sessions', upload.single('file'), async (req, res) => {
       parallelStreams,
       hostPublicKey: publicKey,
       mlConfidence: confidence,
-      downloadUrl: `http://${getLocalIpAddress()}:3000/?join=${sessionId}`
+      downloadUrl: `${getBaseUrl(req)}/?join=${sessionId}`
     });
   } catch (error) {
     console.error('Failed to create session:', error);
@@ -178,7 +197,7 @@ app.post('/api/sessions/receive', async (req, res) => {
     res.json({
       sessionId,
       type: 'receive',
-      downloadUrl: `http://${getLocalIpAddress()}:3000/?join=${sessionId}`
+      downloadUrl: `${getBaseUrl(req)}/?join=${sessionId}`
     });
   } catch (error) {
     console.error('Failed to create receive session:', error);
@@ -187,7 +206,14 @@ app.post('/api/sessions/receive', async (req, res) => {
 });
 
 // HTTP API: Upload file to Host (Client -> Host)
+// Disable socket timeout for this route BEFORE multer runs — large files need unlimited time
 app.post('/api/upload-to-host/:sessionId', (req, res, next) => {
+  // Remove all timeouts so slow mobile uploads don't get killed mid-transfer
+  req.socket.setTimeout(0);
+  req.socket.setNoDelay(true);
+  req.socket.setKeepAlive(true);
+  res.setTimeout(0);
+
   const { sessionId } = req.params;
   const session = activeSessions.get(sessionId);
   if (!session) return res.status(404).json({ error: 'Session not found' });
@@ -195,37 +221,68 @@ app.post('/api/upload-to-host/:sessionId', (req, res, next) => {
   session.status = 'uploading';
   session.uploadedBytes = 0;
 
-  const totalLength = parseInt(req.headers['content-length'], 10) || 0;
-  session.fileSize = totalLength;
+  // Use content-length if available; mobile browsers may send it as total multipart size
+  // We parse it and use it as a size hint for progress display
+  const rawContentLength = parseInt(req.headers['content-length'], 10);
+  if (rawContentLength > 0) {
+    // content-length includes multipart boundary overhead; real file size is slightly smaller
+    // We'll correct this once multer is done. For now use as an upper-bound hint.
+    session.fileSize = rawContentLength;
+  }
 
-  let lastUpdate = 0;
+  // Track bytes flowing through the request stream for live progress broadcasting.
+  // Node.js EventEmitter delivers every chunk to ALL 'data' listeners simultaneously,
+  // so both this counter AND multer's busboy receive the same chunks — no data loss.
+  let lastBroadcast = 0;
   req.on('data', (chunk) => {
     session.uploadedBytes += chunk.length;
     const now = Date.now();
-    if (now - lastUpdate > 100) {
-      broadcastUploadProgress(sessionId, session.uploadedBytes, totalLength);
-      lastUpdate = now;
+    // Throttle broadcasts to max once every 400ms to avoid flooding WebSocket
+    if (now - lastBroadcast > 400) {
+      broadcastUploadProgress(
+        sessionId,
+        session.uploadedBytes,
+        session.fileSize || session.uploadedBytes
+      );
+      lastBroadcast = now;
     }
   });
 
   next();
-}, upload.single('file'), (req, res) => {
+}, (req, res, next) => {
+  // Run multer with an error handler to catch any limit/parse failures
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      console.error('[Upload] Multer error:', err);
+      // Inform the frontend that the upload failed (multer-level error)
+      const sessionId = req.params.sessionId;
+      const session = activeSessions.get(sessionId);
+      if (session) session.status = 'failed';
+      return res.status(500).json({ error: 'File upload failed: ' + (err.message || err.code) });
+    }
+    next();
+  });
+}, (req, res) => {
   const { sessionId } = req.params;
   const session = activeSessions.get(sessionId);
 
-  if (session && req.file) {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file received by server. Upload may have been interrupted.' });
+  }
+
+  if (session) {
     session.status = 'completed';
     session.fileName = req.file.originalname;
     session.fileSize = req.file.size;
     session.filePath = req.file.path;
-    
-    // Broadcast 100% complete
+
+    // Broadcast 100% complete to all WebSocket listeners (laptop dashboard)
     broadcastUploadProgress(sessionId, session.fileSize, session.fileSize);
     broadcastUploadCompleted(sessionId, session.fileName, session.fileSize);
-    console.log(`[Host] Successfully received file ${session.fileName} (${session.fileSize} bytes) for session ${sessionId}`);
+    console.log(`[Host] Successfully received file "${session.fileName}" (${session.fileSize} bytes) for session ${sessionId}`);
   }
 
-  res.json({ success: true });
+  res.json({ success: true, fileName: req.file.originalname, fileSize: req.file.size });
 });
 
 // HTTP API: Get active session info
@@ -284,6 +341,25 @@ app.get('/api/sessions/:sessionId', async (req, res) => {
     res.status(500).json({ error: 'Failed to retrieve session' });
   }
 });
+
+// HTTP API: Direct file download (Host -> Client native browser download)
+app.get('/api/download-file/:sessionId', (req, res) => {
+  const { sessionId } = req.params;
+  const session = activeSessions.get(sessionId);
+
+  if (!session || !session.filePath || !fs.existsSync(session.filePath)) {
+    return res.status(404).json({ error: 'File session not found or missing on host disk' });
+  }
+
+  // Stream file directly to browser with Content-Disposition attachment header
+  res.download(session.filePath, session.fileName, (err) => {
+    if (err && !res.headersSent) {
+      console.error('[Download] Direct download error:', err);
+      res.status(500).json({ error: 'Failed to stream file' });
+    }
+  });
+});
+
 
 // HTTP upgrade logic to route /ws connections
 httpServer.on('upgrade', (request, socket, head) => {
@@ -381,7 +457,7 @@ wss.on('connection', (ws) => {
             const connInfo = connections.get(ws);
             if (!connInfo) return;
             const { clientId, sessionId } = connInfo;
-            const { clientPublicKey } = data;
+            const { clientPublicKey, fallback } = data;
 
             const session = activeSessions.get(sessionId);
             if (!session) {
@@ -389,8 +465,28 @@ wss.on('connection', (ws) => {
               return;
             }
 
+            if (fallback || clientPublicKey === 'FALLBACK') {
+              console.log(`[Crypto] Client ${clientId} requested unencrypted LAN fallback mode (WebCrypto unavailable on mobile HTTP).`);
+              clientSymmetricKeys.set(`${clientId}_${sessionId}`, 'PLAIN');
+              ws.send(JSON.stringify({
+                type: 'handshake_response',
+                hostPublicKey: 'PLAIN'
+              }));
+              break;
+            }
+
             // Derive shared symmetric key (AES-256)
-            const sharedKey = deriveSharedKey(session.ecdhInstance, clientPublicKey);
+            let sharedKey;
+            try {
+              sharedKey = deriveSharedKey(session.ecdhInstance, clientPublicKey);
+            } catch (cryptoErr) {
+              console.error(`[Crypto] ECDH key derivation failed for client ${clientId}:`, cryptoErr.message);
+              ws.send(JSON.stringify({
+                type: 'error',
+                message: 'Cryptographic handshake failed. The server could not process your public key. Please retry.'
+              }));
+              return;
+            }
             clientSymmetricKeys.set(`${clientId}_${sessionId}`, sharedKey);
 
             console.log(`[Crypto] Secure ECDH handshake completed with client ${clientId} for session ${sessionId}`);
@@ -434,10 +530,19 @@ wss.on('connection', (ws) => {
               });
             }
 
-            const fd = fs.openSync(session.filePath, 'r');
-            const buffer = Buffer.alloc(size);
-            fs.readSync(fd, buffer, 0, size, offset);
-            fs.closeSync(fd);
+            // Re-use opened file descriptor if present, otherwise open and cache on session
+            if (!session.fd) {
+              try {
+                session.fd = fs.openSync(session.filePath, 'r');
+              } catch (fdErr) {
+                console.error('[File Read] Failed to open session file:', fdErr);
+                ws.send(JSON.stringify({ type: 'error', message: 'Failed to read file from disk' }));
+                return;
+              }
+            }
+
+            const buffer = Buffer.allocUnsafe(size);
+            fs.readSync(session.fd, buffer, 0, size, offset);
 
             // Compute hash for integrity verification
             const hash = calculateHash(buffer);
@@ -450,44 +555,51 @@ wss.on('connection', (ws) => {
               isCompressed = 1;
             }
 
-            // Encrypt payload using AES key
-            const { iv, tag, ciphertext } = encryptChunk(aesKey, payload);
+            let ivBuffer = Buffer.alloc(12);
+            let tagBuffer = Buffer.alloc(16);
+            let ciphertextBuffer = payload;
+            let isEncrypted = 0;
 
-            // Create high-efficiency binary WebSocket packet
-            const ivBuffer = Buffer.from(iv, 'hex');   // 12 bytes
-            const tagBuffer = Buffer.from(tag, 'hex'); // 16 bytes
-            const ciphertextBuffer = Buffer.from(ciphertext, 'hex');
+            if (aesKey !== 'PLAIN') {
+              isEncrypted = 1;
+              const encrypted = encryptChunk(aesKey, payload);
+              ivBuffer = Buffer.from(encrypted.iv, 'hex');
+              tagBuffer = Buffer.from(encrypted.tag, 'hex');
+              ciphertextBuffer = Buffer.from(encrypted.ciphertext, 'hex');
+            }
 
             // Format layout:
             // 0-3: chunkIndex (UInt32BE)
-            // 4: isCompressed (UInt8)
+            // 4: flags (UInt8) -> bit 0: isCompressed, bit 1: isEncrypted
             // 5-16: IV (12 bytes)
             // 17-32: TAG (16 bytes)
-            // 33+: encrypted payload ciphertext
+            // 33+: payload (ciphertext if encrypted, raw if plain)
+            const flags = (isCompressed & 1) | ((isEncrypted & 1) << 1);
             const header = Buffer.alloc(33);
             header.writeUInt32BE(chunkIndex, 0);
-            header.writeUInt8(isCompressed, 4);
+            header.writeUInt8(flags, 4);
             ivBuffer.copy(header, 5);
             tagBuffer.copy(header, 17);
 
             const binaryFrame = Buffer.concat([header, ciphertextBuffer]);
 
+
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(binaryFrame);
             }
 
-            // Update local SQLite db state to track progress
-            await saveChunkStatus({
+            // Update local SQLite db state asynchronously (non-blocking)
+            saveChunkStatus({
               clientId,
               sessionId,
               chunkIndex,
               status: 'completed',
               sha256: hash
-            });
+            }).catch(err => console.error('saveChunkStatus error:', err));
 
             // Update loaded stats
             const stats = transferStats.get(`${clientId}_${sessionId}`);
-            stats.loadedBytes += size;
+            if (stats) stats.loadedBytes += size;
             break;
           }
 
@@ -571,15 +683,22 @@ process.on('SIGINT', async () => {
 });
 
 // Boot Database first, then launch Web Server
-const PORT = 3000;
 initDb()
   .then(() => {
-    httpServer.listen(PORT, () => {
+    // Bind to all interfaces (0.0.0.0) so mobile devices on the same WiFi/hotspot can reach the backend
+    httpServer.listen(PORT, '0.0.0.0', () => {
+      const localIp = getLocalIpAddress();
       console.log(`================================================================`);
-      console.log(`NearShare backend server is live on http://localhost:${PORT}`);
-      console.log(`Clients can join via: http://${getLocalIpAddress()}:${PORT}`);
+      console.log(`NearShare backend is live on http://localhost:${PORT}`);
+      console.log(`Local network IP : http://${localIp}:${PORT}`);
+      console.log(`Mobile join link : http://${localIp}:${APP_PORT}  (QR code points here)`);
       console.log(`================================================================`);
     });
+
+    // Raise keep-alive and header timeouts so slow mobile uploads don't get cut off
+    httpServer.keepAliveTimeout = 0;    // no keep-alive timeout
+    httpServer.headersTimeout   = 0;    // no headers timeout
+    httpServer.requestTimeout   = 0;    // no request timeout (Node 14+)
   })
   .catch((err) => {
     console.error('Failed to boot application database:', err);

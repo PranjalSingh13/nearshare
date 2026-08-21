@@ -87,7 +87,8 @@ export default function HostDashboard({ onBack, initialMode = 'send' }) {
 
   // ── WebSocket connection
   const connectWebSocket = (sessionId) => {
-    const ws = new WebSocket(`ws://${window.location.host}/ws`);
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
     wsRef.current = ws;
 
     ws.onopen = () => {

@@ -6,11 +6,13 @@ node_modules/
 dist/
 **/dist/
 
-# Local databases and journals
+# Local databases, journals, and temp upload files
 *.db
 *.db-journal
 *.sqlite
 *.sqlite-journal
+shared_files/
+**/shared_files/
 
 # Environment variables
 .env
