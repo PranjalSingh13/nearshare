@@ -85,7 +85,7 @@ function hexToUint8Array(hexString) {
   return result;
 }
 
-export default function ClientView({ prefilledSessionId, onBack }) {
+export default function ClientView({ prefilledSessionId, onBack, token = null, user = null }) {
   const [sessionIdInput, setSessionIdInput] = useState(prefilledSessionId || '');
   const [session, setSession] = useState(null);
   const [joined, setJoined] = useState(false);
@@ -559,6 +559,23 @@ export default function ClientView({ prefilledSessionId, onBack }) {
       wsRef.current.send(JSON.stringify({ type: 'transfer_complete' }));
     }
 
+    // Record to user's transfer history if logged in
+    if (token) {
+      fetch('/api/auth/transfers', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          sessionId: sessionDetails.sessionId,
+          direction: 'received',
+          fileName: sessionDetails.fileName,
+          fileSize: sessionDetails.fileSize
+        })
+      }).catch(err => console.error('Failed to log client received transfer:', err));
+    }
+
     console.log('[Client] File completely downloaded. Reassembling chunks from IndexedDB...');
 
     try {
@@ -777,6 +794,9 @@ export default function ClientView({ prefilledSessionId, onBack }) {
                     // Set timeout to 0 (unlimited) — large files need unlimited transfer time
                     xhr.timeout = 0;
                     xhr.open('POST', `/api/upload-to-host/${session.sessionId}`, true);
+                    if (token) {
+                      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+                    }
                     xhr.upload.onprogress = (e) => {
                       if (e.lengthComputable) {
                         // Use XHR progress for rough tracking; WS upload_progress is more accurate

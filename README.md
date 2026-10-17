@@ -1,7 +1,7 @@
 <div align="center">
 
   <h1>⚡ NearShare</h1>
-  <p><strong>Ultra-Fast, Secure Local & Remote P2P File Sharing with E2E Encryption and ML-Driven Transfer Optimization</strong></p>
+  <p><strong>Ultra-Fast, Secure Local & Remote P2P File Sharing with E2E Encryption, User Authentication, and ML-Driven Transfer Optimization</strong></p>
 
   <p>
     <a href="https://github.com/PranjalSingh13/nearshare"><img src="https://img.shields.io/badge/Status-Active-success?style=for-the-badge" alt="Status" /></a>
@@ -13,7 +13,7 @@
   </p>
 
   <p>
-    <b>100% Local &bull; Zero Cloud Dependency &bull; Up to 50 GB Payloads &bull; Instant QR Pairing &bull; No App Installation Required</b>
+    <b>100% Local &bull; Zero Cloud Dependency &bull; Up to 50 GB Payloads &bull; Instant QR Pairing &bull; User Accounts & Transfer History &bull; Guest Sharing Supported</b>
   </p>
 
 </div>
@@ -25,6 +25,8 @@
 **NearShare** is a high-performance, browser-based peer-to-peer file transfer system engineered for seamless, lightning-fast file exchanges across local area networks (LAN) or remote endpoints via secure tunneling.
 
 Unlike traditional cloud-hosted file transfer tools that route sensitive files through external servers, NearShare initiates an **application-layer cryptographic handshake** directly between host and peer. Files are dynamically split, encrypted with **AES-256-GCM**, piped over real-time **WebSockets**, and optimized on-the-fly using an embedded **k-Nearest Neighbors (k-NN) Machine Learning model** that monitors network telemetry to maximize throughput.
+
+NearShare also features **User Accounts and Authentication** with personal transfer logs, while keeping **Guest Mode** fully accessible for zero-friction transfers.
 
 ---
 
@@ -43,7 +45,7 @@ Unlike traditional cloud-hosted file transfer tools that route sensitive files t
 ### 📱 3. Instant QR Code Peer Pairing
 - **Dual Operating Modes**:
   - **Host Send**: Host shares files from desktop/laptop; generates a local QR code and join link for instant mobile downloading.
-  - **Host Receive**: Host opens a receive drop-room; mobile devices scan the QR code to upload photos, videos, and documents directly to the host storage.
+  - **Host Receive**: Host opens a receive drop-room; mobile devices scan the QR code to upload photos, videos, and documents directly to host storage.
 - **Zero App Required**: Fully functional in any modern mobile or desktop web browser (Safari, Chrome, Firefox, Edge).
 
 ### 🚀 4. High-Capacity & Resumable Streaming
@@ -52,6 +54,58 @@ Unlike traditional cloud-hosted file transfer tools that route sensitive files t
 
 ### ⚡ 5. Real-Time Telemetry & WebSockets
 - Full-duplex WebSocket streaming for instant progress updates, transfer speeds (MB/s), estimated time remaining (ETA), and live client connection status.
+
+### 🔐 6. User Accounts, Authentication & Transfer History
+- **Flexible Authentication**: Sign Up & Log In with Node's cryptographic `scrypt` password hashing with unique salts and HMAC-SHA256 signed JWT tokens.
+- **Persistent Activity Tracking**: Automatically logs sent and received files, file sizes, timestamps, and room codes for registered users.
+- **Frictionless Guest Sharing**: Retains instant zero-account peer-to-peer transfers without requiring mandatory registration.
+
+---
+
+## 📸 Application Showcase
+
+### 1. Main Dashboard & Mode Selection (Guest Mode)
+> Transfer files instantly across local networks. Guest mode is enabled by default with zero registration friction.
+
+<div align="center">
+  <img src="screenshots/01_dashboard.png" alt="NearShare Main Dashboard" width="95%" />
+</div>
+
+---
+
+### 2. User Authentication (Sign In & Registration)
+> Modern glassmorphic authentication dialog supporting sign in, registration, scrypt password hashing, and one-click test credentials autofill.
+
+<div align="center">
+  <img src="screenshots/02_auth_modal.png" alt="NearShare Authentication Modal" width="95%" />
+</div>
+
+---
+
+### 3. Authenticated Member Dashboard & Profile Dropdown
+> Displays user avatar with custom gradient, display name, account status, and quick-access profile dropdown.
+
+<div align="center">
+  <img src="screenshots/03_logged_in_dashboard.png" alt="NearShare Member Dashboard" width="95%" />
+</div>
+
+---
+
+### 4. Personal Transfer History & Activity Logs
+> Complete transfer history with filtering (**All**, **Sent ⬆️**, **Received ⬇️**), formatted byte sizes, timestamps, and room codes.
+
+<div align="center">
+  <img src="screenshots/04_transfer_history.png" alt="NearShare Transfer History Modal" width="95%" />
+</div>
+
+---
+
+### 5. Host Send File Staging & Pairing
+> Select files to initiate session, tune chunk parameters with the ML optimizer, and generate instant QR codes for mobile clients.
+
+<div align="center">
+  <img src="screenshots/05_host_send.png" alt="NearShare Host Send Mode" width="95%" />
+</div>
 
 ---
 
@@ -86,29 +140,40 @@ sequenceDiagram
 
 ```
 nearshare/
-├── nearshare/
-│   ├── backend/
-│   │   ├── crypto.js          # ECDH keypair, AES-256-GCM cipher/decipher & SHA-256
-│   │   ├── db.js              # SQLite3 schema, session tracking & telemetry logs
-│   │   ├── ml_optimizer.js    # k-NN transfer parameter predictor & heuristics
-│   │   ├── server.js          # Express API, WebSocket server & Multer disk storage
-│   │   ├── test_transfer.js   # Automated integration transfer test suite
-│   │   └── package.json       # Backend dependencies (Express, ws, SQLite3, Multer)
-│   │
-│   ├── frontend/
-│   │   ├── src/
-│   │   │   ├── components/
-│   │   │   │   ├── HostDashboard.jsx   # QR generator, live metrics & drop zone
-│   │   │   │   └── ClientView.jsx      # Mobile/browser client decryption & download
-│   │   │   ├── App.jsx                 # Mode routing (Host Send, Host Receive, Client)
-│   │   │   ├── App.css                 # Dark-mode theme & responsive layouts
-│   │   │   └── main.jsx                # React 19 bootstrap entry
-│   │   ├── index.html
-│   │   ├── vite.config.js              # Vite server & LAN host binding (0.0.0.0)
-│   │   └── package.json                # Frontend dependencies (React 19, Lucide, QRCode)
-│   │
-│   ├── package.json           # Workspace root scripts (concurrently runner)
-│   └── package-lock.json
+├── screenshots/               # Application UI showcase screenshots
+│   ├── 01_dashboard.png
+│   ├── 02_auth_modal.png
+│   ├── 03_logged_in_dashboard.png
+│   ├── 04_transfer_history.png
+│   └── 05_host_send.png
+│
+├── backend/
+│   ├── auth.js                # Password hashing (scrypt), JWT issuance & auth middlewares
+│   ├── crypto.js              # ECDH keypair, AES-256-GCM cipher/decipher & SHA-256
+│   ├── db.js                  # SQLite3 schema (users, user_transfers, sessions, telemetry)
+│   ├── ml_optimizer.js        # k-NN transfer parameter predictor & heuristics
+│   ├── server.js              # Express REST API, WebSockets & Multer disk storage
+│   ├── test_transfer.js       # Automated integration transfer test suite
+│   ├── test_auth.js           # Password hashing & JWT unit tests
+│   ├── test_api_auth.js       # End-to-end API authentication tests
+│   └── package.json           # Backend dependencies (Express, ws, SQLite3, Multer)
+│
+├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── AuthModal.jsx            # Sign In / Register dialog with validations
+│   │   │   ├── TransferHistoryModal.jsx # Personal transfer activity & filter tabs
+│   │   │   ├── HostDashboard.jsx        # QR generator, live metrics & drop zone
+│   │   │   └── ClientView.jsx           # Mobile/browser client decryption & download
+│   │   ├── App.jsx                      # Navigation, auth state & mode routing
+│   │   ├── App.css                      # Modern dark-mode cyberpunk design system
+│   │   └── main.jsx                     # React 19 bootstrap entry
+│   ├── index.html
+│   ├── vite.config.js                   # Vite server & LAN host binding (0.0.0.0)
+│   └── package.json                     # Frontend dependencies (React 19, Lucide, QRCode)
+│
+├── package.json               # Workspace root scripts (concurrently runner)
+├── package-lock.json
 └── README.md
 ```
 
@@ -121,8 +186,9 @@ nearshare/
 | **Frontend** | React 19, Vite 5.4 | High-performance reactive UI |
 | **Icons & QR** | Lucide React, `qrcode` | Visual indicators & instant peer pairing |
 | **Backend** | Node.js (ES Modules), Express | REST endpoints & static asset serving |
+| **Authentication** | Node `crypto` (scrypt), HMAC-SHA256 | Secure password hashing & JWT token issuance |
 | **Realtime** | `ws` (WebSockets) | Full-duplex state sync & chunk pipeline |
-| **Storage & State** | SQLite3, Multer | Session management & large disk chunking |
+| **Storage & State** | SQLite3, Multer | User profiles, transfer logs & disk chunking |
 | **Security** | Node `crypto` | ECDH (`prime256v1`), AES-256-GCM, SHA-256 |
 | **Optimization**| Custom k-NN Engine, `zlib` | Network telemetry & dynamic compression |
 
@@ -140,7 +206,7 @@ Clone the repository and install all dependencies in one command:
 
 ```bash
 git clone https://github.com/PranjalSingh13/nearshare.git
-cd nearshare/nearshare
+cd nearshare
 npm run setup
 ```
 
@@ -174,6 +240,7 @@ npm run prod
 
 - **Forward Secrecy**: Ephemeral ECDH key pairs ensure that past sessions cannot be decrypted even if host keys are inspected later.
 - **Authenticated Encryption**: AES-256-GCM safeguards against bit-flipping and payload truncation attacks.
+- **Secure Password Storage**: Passwords are salted with random 16-byte entropy and hashed via `scrypt` with constant-time equality checks.
 - **Zero Cloud Storage**: Files reside strictly in memory/local disk staging on the host machine and are purged when sessions end.
 
 ---

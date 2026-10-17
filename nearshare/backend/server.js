@@ -16,8 +16,24 @@ import {
   saveChunkStatus,
   getClientProgress,
   resetClientProgress,
-  saveTelemetry
+  saveTelemetry,
+  createUser,
+  getUserByUsername,
+  getUserByEmail,
+  getUserByLogin,
+  getUserById,
+  saveUserTransfer,
+  getUserTransfers,
+  clearUserTransfers
 } from './db.js';
+import {
+  hashPassword,
+  verifyPassword,
+  generateToken,
+  verifyToken,
+  requireAuth,
+  optionalAuth
+} from './auth.js';
 import { generateKeypair, deriveSharedKey, encryptChunk, calculateHash } from './crypto.js';
 import { predictOptimalSettings } from './ml_optimizer.js';
 
@@ -109,8 +125,211 @@ app.get('/api/config', (req, res) => {
   res.json({ ip, port: APP_PORT });
 });
 
+// ==========================================
+// AUTHENTICATION & USER MANAGEMENT ROUTES
+// ==========================================
+
+// HTTP API: Sign Up
+app.post('/api/auth/signup', async (req, res) => {
+  try {
+    const { username, email, password, displayName } = req.body;
+
+    if (!username || typeof username !== 'string' || username.trim().length < 3) {
+      return res.status(400).json({ error: 'Username must be at least 3 characters long.' });
+    }
+    const cleanUsername = username.trim().toLowerCase();
+    if (!/^[a-zA-Z0-9_]{3,30}$/.test(cleanUsername)) {
+      return res.status(400).json({ error: 'Username must contain only letters, numbers, and underscores (3-30 chars).' });
+    }
+
+    if (!email || typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      return res.status(400).json({ error: 'A valid email address is required.' });
+    }
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!password || typeof password !== 'string' || password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters long.' });
+    }
+
+    // Check existing username
+    const existingUsername = await getUserByUsername(cleanUsername);
+    if (existingUsername) {
+      return res.status(409).json({ error: 'Username is already taken. Please choose another.' });
+    }
+
+    // Check existing email
+    const existingEmail = await getUserByEmail(cleanEmail);
+    if (existingEmail) {
+      return res.status(409).json({ error: 'Email is already registered. Please sign in instead.' });
+    }
+
+    // Hash password securely with scrypt + unique salt
+    const { hash, salt } = hashPassword(password);
+    const userId = 'usr_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
+
+    // Aesthetic avatar gradients
+    const avatarGradients = [
+      'linear-gradient(135deg, #a855f7, #6366f1)',
+      'linear-gradient(135deg, #06b6d4, #3b82f6)',
+      'linear-gradient(135deg, #10b981, #06b6d4)',
+      'linear-gradient(135deg, #f43f5e, #fb923c)',
+      'linear-gradient(135deg, #8b5cf6, #ec4899)'
+    ];
+    const avatarColor = avatarGradients[Math.floor(Math.random() * avatarGradients.length)];
+
+    const created = await createUser({
+      id: userId,
+      username: cleanUsername,
+      email: cleanEmail,
+      passwordHash: hash,
+      salt,
+      displayName: displayName && displayName.trim() ? displayName.trim() : username.trim(),
+      avatarColor
+    });
+
+    // Generate JWT token
+    const token = generateToken({ id: userId, username: cleanUsername, email: cleanEmail });
+
+    console.log(`[Auth] Registered new user: @${cleanUsername} (${cleanEmail})`);
+
+    res.status(201).json({
+      success: true,
+      token,
+      user: {
+        id: userId,
+        username: cleanUsername,
+        email: cleanEmail,
+        displayName: created.displayName,
+        avatarColor,
+        createdAt: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Signup error:', error);
+    res.status(500).json({ error: 'Failed to create account.' });
+  }
+});
+
+// HTTP API: Login
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { login, password } = req.body;
+    if (!login || !password) {
+      return res.status(400).json({ error: 'Username/Email and Password are required.' });
+    }
+
+    const cleanLogin = login.trim();
+    const user = await getUserByLogin(cleanLogin);
+
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid username/email or password.' });
+    }
+
+    const isValid = verifyPassword(password, user.password_hash, user.salt);
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid username/email or password.' });
+    }
+
+    const token = generateToken({ id: user.id, username: user.username, email: user.email });
+
+    console.log(`[Auth] User logged in: @${user.username}`);
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        displayName: user.display_name,
+        avatarColor: user.avatar_color,
+        createdAt: user.created_at
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Failed to process login.' });
+  }
+});
+
+// HTTP API: Current Authenticated User Profile
+app.get('/api/auth/me', requireAuth, async (req, res) => {
+  try {
+    const user = await getUserById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        displayName: user.display_name,
+        avatarColor: user.avatar_color,
+        createdAt: user.created_at
+      }
+    });
+  } catch (error) {
+    console.error('Fetch me error:', error);
+    res.status(500).json({ error: 'Failed to retrieve user profile.' });
+  }
+});
+
+// HTTP API: User Transfer History
+app.get('/api/auth/transfers', requireAuth, async (req, res) => {
+  try {
+    const transfers = await getUserTransfers(req.user.id);
+    res.json({ success: true, transfers });
+  } catch (error) {
+    console.error('Fetch transfers error:', error);
+    res.status(500).json({ error: 'Failed to retrieve transfer history.' });
+  }
+});
+
+// HTTP API: Record a Transfer (for client or guest or authenticated users)
+app.post('/api/auth/transfers', optionalAuth, async (req, res) => {
+  try {
+    const userId = req.user?.id || req.body.userId;
+    if (!userId) {
+      return res.json({ success: true, guest: true });
+    }
+    const { sessionId, direction, fileName, fileSize } = req.body;
+    if (!fileName || !direction) {
+      return res.status(400).json({ error: 'fileName and direction are required.' });
+    }
+    const record = await saveUserTransfer({
+      userId,
+      sessionId,
+      direction,
+      fileName,
+      fileSize: parseInt(fileSize, 10) || 0
+    });
+    res.json({ success: true, id: record.id });
+  } catch (error) {
+    console.error('Save transfer error:', error);
+    res.status(500).json({ error: 'Failed to record transfer.' });
+  }
+});
+
+// HTTP API: Clear Transfer History
+app.delete('/api/auth/transfers', requireAuth, async (req, res) => {
+  try {
+    await clearUserTransfers(req.user.id);
+    res.json({ success: true, message: 'Transfer history cleared.' });
+  } catch (error) {
+    console.error('Clear transfers error:', error);
+    res.status(500).json({ error: 'Failed to clear transfer history.' });
+  }
+});
+
+// ==========================================
+// SESSION MANAGEMENT ROUTES
+// ==========================================
+
 // HTTP API: Upload file and create session
-app.post('/api/sessions', upload.single('file'), async (req, res) => {
+app.post('/api/sessions', optionalAuth, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file provided' });
@@ -133,8 +352,11 @@ app.post('/api/sessions', upload.single('file'), async (req, res) => {
     // Generate ECDH cryptographic keypair for this session
     const { publicKey, ecdhInstance } = generateKeypair();
 
+    const userId = req.user ? req.user.id : null;
+
     const sessionData = {
       sessionId,
+      userId,
       filePath,
       fileName,
       fileSize,
@@ -147,6 +369,17 @@ app.post('/api/sessions', upload.single('file'), async (req, res) => {
 
     // Persist to database
     await saveSession(sessionData);
+
+    // If authenticated user created session, record to their history
+    if (userId) {
+      saveUserTransfer({
+        userId,
+        sessionId,
+        direction: 'sent',
+        fileName,
+        fileSize
+      }).catch(err => console.error('Failed to auto-record host transfer:', err));
+    }
 
     // Store ECDH instance and public key in active memory
     activeSessions.set(sessionId, {
@@ -176,12 +409,14 @@ app.post('/api/sessions', upload.single('file'), async (req, res) => {
 });
 
 // HTTP API: Create a Receive Session (Mobile -> Laptop)
-app.post('/api/sessions/receive', async (req, res) => {
+app.post('/api/sessions/receive', optionalAuth, async (req, res) => {
   try {
     const sessionId = Math.random().toString(36).substring(2, 8).toUpperCase();
-    
+    const userId = req.user ? req.user.id : null;
+
     const sessionData = {
       sessionId,
+      userId,
       type: 'receive',
       status: 'waiting', // waiting, uploading, completed
       fileName: '',
@@ -207,7 +442,7 @@ app.post('/api/sessions/receive', async (req, res) => {
 
 // HTTP API: Upload file to Host (Client -> Host)
 // Disable socket timeout for this route BEFORE multer runs — large files need unlimited time
-app.post('/api/upload-to-host/:sessionId', (req, res, next) => {
+app.post('/api/upload-to-host/:sessionId', optionalAuth, (req, res, next) => {
   // Remove all timeouts so slow mobile uploads don't get killed mid-transfer
   req.socket.setTimeout(0);
   req.socket.setNoDelay(true);
@@ -280,6 +515,28 @@ app.post('/api/upload-to-host/:sessionId', (req, res, next) => {
     broadcastUploadProgress(sessionId, session.fileSize, session.fileSize);
     broadcastUploadCompleted(sessionId, session.fileName, session.fileSize);
     console.log(`[Host] Successfully received file "${session.fileName}" (${session.fileSize} bytes) for session ${sessionId}`);
+
+    // Record in Host transfer history if Host is logged in
+    if (session.userId) {
+      saveUserTransfer({
+        userId: session.userId,
+        sessionId,
+        direction: 'received',
+        fileName: session.fileName,
+        fileSize: session.fileSize
+      }).catch(err => console.error('Failed to save host received transfer:', err));
+    }
+
+    // Record in Client transfer history if Client is logged in
+    if (req.user?.id) {
+      saveUserTransfer({
+        userId: req.user.id,
+        sessionId,
+        direction: 'sent',
+        fileName: session.fileName,
+        fileSize: session.fileSize
+      }).catch(err => console.error('Failed to save client sent transfer:', err));
+    }
   }
 
   res.json({ success: true, fileName: req.file.originalname, fileSize: req.file.size });

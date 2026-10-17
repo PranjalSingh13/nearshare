@@ -17,7 +17,7 @@ import {
 // ─────────────────────────────────────────────────────────
 // HOST DASHBOARD — supports initialMode: 'send' | 'receive'
 // ─────────────────────────────────────────────────────────
-export default function HostDashboard({ onBack, initialMode = 'send' }) {
+export default function HostDashboard({ onBack, initialMode = 'send', token = null, user = null }) {
   // ── Send-mode state
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -76,7 +76,8 @@ export default function HostDashboard({ onBack, initialMode = 'send' }) {
   // ── Create a Receive session via backend
   const createReceiveSession = async () => {
     try {
-      const res = await fetch('/api/sessions/receive', { method: 'POST' });
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      const res = await fetch('/api/sessions/receive', { method: 'POST', headers });
       const data = await res.json();
       setSessionData(data);
       connectWebSocket(data.sessionId);
@@ -151,6 +152,9 @@ export default function HostDashboard({ onBack, initialMode = 'send' }) {
 
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/api/sessions', true);
+    if (token) {
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    }
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) setUploadProgress(Math.round((e.loaded / e.total) * 100));
     };
