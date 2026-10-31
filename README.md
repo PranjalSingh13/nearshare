@@ -68,7 +68,7 @@ NearShare also features **User Accounts and Authentication** with personal trans
 > Transfer files instantly across local networks. Guest mode is enabled by default with zero registration friction.
 
 <div align="center">
-  <img src="./screenshots/01_dashboard.png" alt="NearShare Main Dashboard" width="95%" />
+  <img src="nearshare/screenshots/01_dashboard.png" alt="NearShare Main Dashboard" width="95%" />
 </div>
 
 ---
@@ -77,7 +77,7 @@ NearShare also features **User Accounts and Authentication** with personal trans
 > Modern glassmorphic authentication dialog supporting sign in, registration, scrypt password hashing, and one-click test credentials autofill.
 
 <div align="center">
-  <img src="./screenshots/02_auth_modal.png" alt="NearShare Authentication Modal" width="95%" />
+  <img src="nearshare/screenshots/02_auth_modal.png" alt="NearShare Authentication Modal" width="95%" />
 </div>
 
 ---
@@ -86,7 +86,7 @@ NearShare also features **User Accounts and Authentication** with personal trans
 > Displays user avatar with custom gradient, display name, account status, and quick-access profile dropdown.
 
 <div align="center">
-  <img src="./screenshots/03_logged_in_dashboard.png" alt="NearShare Member Dashboard" width="95%" />
+  <img src="nearshare/screenshots/03_logged_in_dashboard.png" alt="NearShare Member Dashboard" width="95%" />
 </div>
 
 ---
@@ -95,7 +95,7 @@ NearShare also features **User Accounts and Authentication** with personal trans
 > Complete transfer history with filtering (**All**, **Sent ⬆️**, **Received ⬇️**), formatted byte sizes, timestamps, and room codes.
 
 <div align="center">
-  <img src="./screenshots/04_transfer_history.png" alt="NearShare Transfer History Modal" width="95%" />
+  <img src="nearshare/screenshots/04_transfer_history.png" alt="NearShare Transfer History Modal" width="95%" />
 </div>
 
 ---
@@ -104,7 +104,7 @@ NearShare also features **User Accounts and Authentication** with personal trans
 > Select files to initiate session, tune chunk parameters with the ML optimizer, and generate instant QR codes for mobile clients.
 
 <div align="center">
-  <img src="./screenshots/05_host_send.png" alt="NearShare Host Send Mode" width="95%" />
+  <img src="nearshare/screenshots/05_host_send.png" alt="NearShare Host Send Mode" width="95%" />
 </div>
 
 ---
